@@ -1,0 +1,101 @@
+# wt - global config.  Override per repo with <repo>/.wt.toml (deep-merged over this).
+#
+# Tables merge; arrays REPLACE (a repo `copy = [...]` overrides, never appends).
+# Merge order for a mode:   [defaults] -> [mode.<mode>] -> [mode.<mode>.<provider>]
+# Merge order for teardown: [teardown] -> [teardown.mode.<mode>]
+# Provider ("ado" | "github") is detected from origin's URL. Nothing is ever synced.
+
+[defaults]
+root = "../{repo}.worktrees"     # sibling of the main repo, nested by branch
+remote = "origin"                # fetch/push remote; a fork setup may differ
+fetch = true                     # fetch --prune before resolving a base
+base = "origin/{default_branch}"
+branch = "{type}/{id}-{slug}"
+copy = [".env", ".databricks"]   # gitignored files carried from the main worktree
+symlink = []                     # beads needs none: bd resolves via git-common-dir
+exec = []                        # per-repo, set in <repo>/.wt.toml
+exec_timeout = 600               # per command; a prompt on the hook path must not hang
+exec_strict = false              # true: a failing exec step rolls the worktree back
+
+
+# --- modes -------------------------------------------------------------------
+
+[mode.new] # wt new fix "msal login loop"
+branch = "{type}/{slug}"
+
+[mode.item] # wt item 21438
+push = true          # a branch must exist on origin before it can be linked
+link_branch = true   # ADO: ArtifactLink in the work item's Development area
+set_state = "Active"
+
+[mode.item.github] # same mode, GitHub remote: neither has an equivalent
+push = true
+link_branch = false
+set_state = ""
+
+[mode.pr] # wt pr 4521 - detached, disposable
+dirname = "review/pr-{id}"
+copy = []                  # never seed secrets into someone else's code
+exec = []
+
+[mode.branch] # wt branch feat/xledger
+detach = true             # --track opts into a real tracking branch
+dirname = "review/{slug}"
+copy = []                 # never seed secrets into someone else's code
+exec = []
+
+
+# --- herdr -------------------------------------------------------------------
+# Labels for `wt ... --open`, which runs `herdr worktree open`.
+
+[herdr]
+label_default = "{repo} · {branch}"
+
+[herdr.label]
+item = "{repo} · #{id}"
+pr = "{repo} · PR {id}"
+new = "{repo} · {branch}"
+branch = "{repo} · review {branch}"
+
+
+# --- teardown ----------------------------------------------------------------
+
+[teardown]
+fetch = false               # true: refresh refs so "if_merged" is not stale
+require_clean = true        # refuse on uncommitted / unpushed / stashes
+delete_branch = "if_merged" # "never" | "if_merged" | "always"
+purge_copied = true         # copied secrets must not rot in a dead tree
+prune = true
+
+[teardown.mode.hook] # the unattended Claude Code WorktreeRemove path
+force = false # never destroy uncommitted work with nobody watching
+
+[teardown.mode.pr]
+require_clean = false   # review trees are throwaway
+delete_branch = "never" # there is no branch
+ttl_days = 3            # wt rm --stale reaps these
+
+[teardown.mode.branch]
+delete_branch = "never" # never delete someone else's branch
+
+
+# --- naming ------------------------------------------------------------------
+# `wt item` asks a fast model to turn the work item title into a conventional
+# type + a 2-4 word english slug. Falls back to the mechanical slug on timeout,
+# bad output, or a missing `claude` binary. --no-llm skips it for one call.
+
+[naming]
+llm = true
+# stopwords = [...]              # override the built-in english+norwegian list
+model = "haiku"
+timeout = 60
+
+# Tracker work-item type -> conventional-commit type. ADO process templates are
+# per-org customisable, so override here rather than editing wt.py.
+[naming.type_from_tracker]
+bug = "fix"
+task = "chore"
+"user story" = "feat"
+"product backlog item" = "feat"
+feature = "feat"
+epic = "feat"
