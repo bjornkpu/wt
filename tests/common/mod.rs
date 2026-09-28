@@ -22,6 +22,19 @@ impl Env {
     pub fn new(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!("wt-it-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // `TEMP`/`TMP` can be an 8.3 short form (GitHub's windows-latest
+        // runner sets it that way for `runneradmin`); git always reports
+        // paths in their long canonical form, so a test built from the short
+        // root would never match wt's own output. Canonicalizing - then
+        // stripping the `\\?\` verbatim prefix `canonicalize` adds - puts
+        // every test on the same long form git uses.
+        #[cfg(windows)]
+        let root = {
+            let canon = std::fs::canonicalize(&root).unwrap();
+            let s = canon.to_str().unwrap();
+            PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(s))
+        };
         std::fs::create_dir_all(root.join("wt-home")).unwrap();
         std::fs::write(root.join("gitconfig"), "").unwrap();
         std::fs::write(root.join("wt-home/config.toml"), "[naming]\nllm = false\n").unwrap();
