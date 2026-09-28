@@ -79,7 +79,7 @@ impl Env {
             .env("GIT_COMMITTER_NAME", "BK")
             .env("GIT_COMMITTER_EMAIL", "bk@example.com")
             .env("WT_HOME", self.root.join("wt-home"))
-            .env("PATH", path_without_herdr());
+            .env("PATH", self.hidden_path(&["herdr"]));
         cmd
     }
 
@@ -169,6 +169,53 @@ impl Env {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+
+    /// PATH with every directory holding one of `hide` removed - except
+    /// that, on unix, a directory that also holds `git`/`sh`/`bash` survives
+    /// as a per-`Env` "keep" dir of symlinks to just those tools (cleaned up
+    /// with the rest of `root`), in the original's place. Needed because
+    /// GitHub's ubuntu runner keeps `gh` (and `az`) in `/usr/bin`, right next
+    /// to `git` and `sh`: dropping that whole directory took git down with
+    /// it. Windows keeps the simple drop - git lives in its own directory
+    /// there.
+    // On Windows, `self` (used to scope the unix-only keep dir below) goes
+    // unused - git lives in its own directory there, so a plain drop is
+    // enough.
+    #[allow(clippy::unused_self)]
+    pub fn hidden_path(&self, hide: &[&str]) -> std::ffi::OsString {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut kept: Vec<PathBuf> = Vec::new();
+        for dir in std::env::split_paths(&path) {
+            if hide.iter().any(|t| holds(&dir, t)) {
+                #[cfg(unix)]
+                {
+                    let survivors: Vec<&str> = KEEP_TOOLS
+                        .iter()
+                        .copied()
+                        .filter(|t| holds(&dir, t))
+                        .collect();
+                    if !survivors.is_empty() {
+                        // `kept.len()` as a name, not a counter: no `+= 1` to trip
+                        // `arithmetic_side_effects`.
+                        let keep_dir = self.root.join("path-keep").join(kept.len().to_string());
+                        std::fs::create_dir_all(&keep_dir).unwrap();
+                        for tool in survivors {
+                            std::os::unix::fs::symlink(dir.join(tool), keep_dir.join(tool))
+                                .unwrap();
+                        }
+                        kept.push(keep_dir);
+                    }
+                }
+            } else {
+                kept.push(dir);
+            }
+        }
+        assert!(
+            kept.iter().any(|dir| holds(dir, "git")),
+            "filtering {hide:?} out of PATH also lost git"
+        );
+        std::env::join_paths(kept).unwrap()
     }
 
     /// Sidecar file names under the shared `.git/wt`.
@@ -280,21 +327,10 @@ fn holds(dir: &Path, name: &str) -> bool {
         .any(|ext| dir.join(format!("{name}{ext}")).is_file())
 }
 
-/// This process's PATH without any directory holding a herdr: tests never
-/// spawn it, and `rm` and `--open` would find a real one on a dev machine.
-/// Ceiling: a whole directory goes, so a tool sharing herdr's directory is
-/// lost too. git must survive, or every test breaks: asserted here.
-fn path_without_herdr() -> std::ffi::OsString {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let kept: Vec<PathBuf> = std::env::split_paths(&path)
-        .filter(|dir| !holds(dir, "herdr"))
-        .collect();
-    assert!(
-        kept.iter().any(|dir| holds(dir, "git")),
-        "filtering herdr out of PATH also lost git"
-    );
-    std::env::join_paths(kept).unwrap()
-}
+/// Tools `Env::hidden_path` keeps a hidden directory's copy of, on unix: the
+/// tests' own `git`, plus the shell git hooks and local pushes need.
+#[cfg(unix)]
+const KEEP_TOOLS: &[&str] = &["git", "sh", "bash"];
 
 impl Drop for Env {
     fn drop(&mut self) {

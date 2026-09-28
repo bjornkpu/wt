@@ -10,25 +10,14 @@ use common::Env;
 
 const BRANCH: &str = "fix/21438-msal-login-loop";
 
-/// PATH without any directory that holds az, gh, claude or herdr, so a test
-/// that passes proves no tracker call was made. The rest stays: a local push
-/// needs git's own `sh`, which a git-only PATH may not reach.
-fn path_without_trackers() -> String {
-    let path = std::env::var_os("PATH").unwrap();
-    let tools = ["az", "gh", "claude", "herdr"];
-    let exts = ["", ".cmd", ".exe", ".bat", ".ps1"];
-    let kept: Vec<PathBuf> = std::env::split_paths(&path)
-        .filter(|dir| {
-            !tools
-                .iter()
-                .any(|t| exts.iter().any(|e| dir.join(format!("{t}{e}")).is_file()))
-        })
-        .collect();
-    std::env::join_paths(kept).unwrap().into_string().unwrap()
-}
-
+/// A `wt` run with `az`, `gh`, `claude` and `herdr` all hidden from PATH, so
+/// a test that passes proves no tracker call was made. `Env::hidden_path`
+/// keeps git (and the shell it needs) reachable even when a hidden tool
+/// shares its directory, as `gh` does with `git` in `/usr/bin` on GitHub's
+/// ubuntu runner.
 fn wt_no_tracker(env: &Env, args: &[&str]) -> Output {
-    env.wt_at_with_path(&env.repo(), args, &path_without_trackers())
+    let path = env.hidden_path(&["az", "gh", "claude", "herdr"]);
+    env.wt_at_with_path(&env.repo(), args, path.to_str().unwrap())
 }
 
 /// The tree an earlier `wt item 21438` left behind, with its sidecar.
