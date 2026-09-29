@@ -284,6 +284,35 @@ fn f7_a_symlinked_entry_is_recorded_for_teardown() {
     assert_eq!(meta["copied"], serde_json::json!(["shared"]));
 }
 
+/// A junction needs no privilege to make, but recreating it as a link does:
+/// without Developer Mode its content is copied instead of rolling back.
+#[cfg(windows)]
+#[test]
+fn a_junction_inside_a_copied_dir_does_not_fail_the_seed() {
+    let env = Env::new("new-junction");
+    let outside = env.root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("b.txt"), "b").unwrap();
+    let dir = env.repo().join("dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(dir.join("j"))
+        .arg(&outside)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    env.set_config("[defaults]\ncopy = [\"dir\"]\n");
+
+    let out = env.wt(&["-q", "new", "feat/junction"]);
+    assert!(out.status.success(), "{}", Env::stderr(&out));
+    let path = env.worktrees_root().join("feat").join("junction");
+    assert_eq!(
+        std::fs::read_to_string(path.join("dir").join("j").join("b.txt")).unwrap(),
+        "b"
+    );
+}
+
 #[test]
 fn a_rollback_keeps_a_local_branch_it_did_not_create() {
     let env = Env::new("new-rollback-keeps-branch");

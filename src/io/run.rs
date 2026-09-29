@@ -1508,14 +1508,40 @@ fn copy_entry(src: &Path, dst: &Path) -> std::io::Result<()> {
         if entry.file_type()?.is_symlink() && from.is_dir() {
             let target = std::fs::read_link(&from)?;
             #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(&target, &to)?;
+            let linked = std::os::windows::fs::symlink_dir(&target, &to);
             #[cfg(not(windows))]
-            std::os::unix::fs::symlink(&target, &to)?;
+            let linked = std::os::unix::fs::symlink(&target, &to);
+            match linked {
+                // Windows without Developer Mode cannot make the link.
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    copy_linked_dir(&from, &to)?;
+                }
+                linked => linked?,
+            }
         } else {
             copy_entry(&from, &to)?;
         }
     }
     Ok(())
+}
+
+/// Copies what the directory link `link` points at, as Python's copytree
+/// did, unless it points back up to a directory that holds the link.
+/// ponytail: a loop through two links outside the tree (A -> B -> A) still
+/// recurses without end; track the canonical directories visited if one
+/// turns up.
+fn copy_linked_dir(link: &Path, to: &Path) -> std::io::Result<()> {
+    let target = std::fs::canonicalize(link)?;
+    if let Some(parent) = link.parent()
+        && std::fs::canonicalize(parent)?.starts_with(&target)
+    {
+        eprintln!(
+            "wt: skipped {}: it links to a directory that holds it",
+            link.display()
+        );
+        return Ok(());
+    }
+    copy_entry(link, to)
 }
 
 fn link_entry(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -1610,8 +1636,25 @@ fn roll_back(main_root: &Path, done: &[Done]) {
 mod tests {
     use super::*;
 
-    /// A directory link inside a copied directory is copied as the link:
-    /// following one that points back up would recurse without end.
+    /// A directory link: a junction on Windows, which needs no privilege,
+    /// so the test runs without Developer Mode.
+    fn dir_link(target: &Path, link: &Path) {
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(made.status.success(), "{made:?}");
+        }
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    /// A directory link that points back up is never followed: it is copied
+    /// as the link, or, where the link cannot be made, skipped.
     #[test]
     fn a_directory_link_inside_a_copied_dir_is_not_followed() {
         let root = std::env::temp_dir().join(format!("wt-copy-loop-{}", std::process::id()));
@@ -1619,22 +1662,52 @@ mod tests {
         let src = root.join("src");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.txt"), "a").unwrap();
-        #[cfg(windows)]
-        let linked = std::os::windows::fs::symlink_dir(&src, src.join("loop"));
-        #[cfg(not(windows))]
-        let linked = std::os::unix::fs::symlink(&src, src.join("loop"));
-        if let Err(e) = linked {
-            // Windows without Developer Mode may not create links at all.
-            assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{e}");
-            let _ = std::fs::remove_dir_all(&root);
-            return;
-        }
+        dir_link(&src, &src.join("loop"));
         let dst = root.join("dst");
         let copied = copy_entry(&src, &dst);
         let link = dst.join("loop").symlink_metadata();
+        let a = std::fs::read_to_string(dst.join("a.txt"));
         let _ = std::fs::remove_dir_all(&root);
         copied.unwrap();
-        assert!(link.unwrap().is_symlink());
+        assert_eq!(a.unwrap(), "a");
+        assert!(link.map_or(true, |m| m.is_symlink()), "loop was followed");
+    }
+
+    /// Where the link cannot be made, what it points at is copied.
+    #[test]
+    fn a_denied_directory_link_to_outside_is_copied() {
+        let root = std::env::temp_dir().join(format!("wt-copy-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (src, outside) = (root.join("src"), root.join("outside"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("b.txt"), "b").unwrap();
+        dir_link(&outside, &src.join("out"));
+        let to = root.join("dst").join("out");
+        let copied = copy_linked_dir(&src.join("out"), &to);
+        let b = std::fs::read_to_string(to.join("b.txt"));
+        let is_link = to.symlink_metadata().map(|m| m.is_symlink());
+        let _ = std::fs::remove_dir_all(&root);
+        copied.unwrap();
+        assert_eq!(b.unwrap(), "b");
+        assert!(!is_link.unwrap(), "copied, not linked");
+    }
+
+    /// Where the link cannot be made and it points back up, copying would
+    /// never end: it is skipped.
+    #[test]
+    fn a_denied_directory_link_to_its_own_parent_is_skipped() {
+        let root = std::env::temp_dir().join(format!("wt-copy-up-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        dir_link(&src, &src.join("loop"));
+        let to = root.join("dst").join("loop");
+        let copied = copy_linked_dir(&src.join("loop"), &to);
+        let left = to.symlink_metadata();
+        let _ = std::fs::remove_dir_all(&root);
+        copied.unwrap();
+        assert!(left.is_err(), "loop was copied");
     }
 
     #[test]
