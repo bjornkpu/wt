@@ -286,7 +286,8 @@ One beads epic, one child per milestone, in dependency order:
 2. Install through the dist PowerShell installer into `~/.local/bin`.
 3. Delete `~/.local/bin/wt` and `~/.local/bin/wt.cmd`.
 4. Point `WorktreeCreate` / `WorktreeRemove` in `~/.claude/settings.local.json` (and the
-   dotfiles copy, if any) at `~/.local/bin/wt.exe hook-create` / `~/.local/bin/wt.exe hook-remove`,
+   dotfiles copy, if any) at `C:/Users/<you>/.local/bin/wt.exe hook-create` /
+   `C:/Users/<you>/.local/bin/wt.exe hook-remove`,
    by absolute path: a bare `wt` can resolve to Windows Terminal's alias.
 5. Replace the `$PROFILE` line with `Invoke-Expression (& wt init pwsh | Out-String)`.
 6. Archive the Python code in `~/.config/wt`, keeping `config.toml`. Remove the stale
