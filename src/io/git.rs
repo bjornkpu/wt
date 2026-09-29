@@ -59,16 +59,27 @@ fn try_run_timeout(args: &[&str], cwd: &Path, timeout: Duration) -> Result<Outpu
         });
     };
     // git has exited, but a helper it started (remote-https, a credential
-    // manager, ssh ControlPersist) may still hold the pipes.
+    // manager, ssh ControlPersist) may still hold the pipes. A held pipe
+    // yields nothing: its reader only sends at EOF.
     let draining = Instant::now();
     let [stdout, stderr] = [stdout, stderr].map(|rx| {
         rx.recv_timeout(cli::DRAIN_GRACE.saturating_sub(draining.elapsed()))
             .ok()
     });
-    let [Some(stdout), Some(stderr)] = [stdout, stderr] else {
-        return Err(AppError::GitHeld {
-            args: args.join(" "),
-        });
+    let [stdout, stderr] = match [stdout, stderr] {
+        [Some(stdout), Some(stderr)] => [stdout, stderr],
+        _ if !status.success() => {
+            return Err(AppError::GitHeld {
+                args: args.join(" "),
+            });
+        }
+        held => {
+            eprintln!(
+                "wt: git {} exited but left processes holding its output; continuing",
+                args.join(" ")
+            );
+            held.map(Option::unwrap_or_default)
+        }
     };
     Ok(Output {
         success: status.success(),
@@ -162,6 +173,15 @@ mod tests {
             &std::env::temp_dir(),
         );
         assert!(started.elapsed() < Duration::from_secs(15), "{out:?}");
+        assert!(matches!(out, Ok(Output { success: true, .. })), "{out:?}");
+    }
+
+    #[test]
+    fn a_failed_git_with_held_pipes_is_an_error() {
+        let out = try_run(
+            &["-c", "alias.hold=!sleep 30 & exit 3", "hold"],
+            &std::env::temp_dir(),
+        );
         assert!(matches!(out, Err(AppError::GitHeld { .. })), "{out:?}");
     }
 }

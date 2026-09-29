@@ -146,6 +146,9 @@ on timeout, bad output, or a missing `claude` binary. `--no-llm` skips it for on
   would make Claude Code drop a tree that exists.
 - Redirect the output of anything you background inside an `exec` step. An abandoned pipe can
   otherwise hang the caller, including the hook path.
+- An ssh ControlPersist master or a credential helper can keep git's output open after git
+  exits. wt then waits 2 s. If git succeeded, wt shows a warning and continues. If git failed,
+  wt fails.
 - A tree whose `.git` link is broken but whose directory is still there is refused outright, even
   with `--force`: delete the directory, or run `git worktree repair`. That command prints an
   error and exits 1 even when it actually fixed the tree, so check the tree afterwards rather
