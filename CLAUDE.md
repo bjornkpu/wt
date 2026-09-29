@@ -8,7 +8,7 @@ the authority where the two disagree. Work is tracked in beads (`bd ready`), not
 ## Commands
 
 - `cargo nextest run`: tests (use this, not `cargo test`)
-- `cargo clippy --all-targets`: must be clean; lints are `deny`, so this is the compile gate
+- `cargo clippy --all-targets -- -D warnings`: must be clean; lints are `deny`, so this is the compile gate
 - `cargo fmt --check`: formatting
 - `bacon clippy` / `bacon nextest`: watch mode
 - `cargo run -- <args>`: run the CLI; set `WT_HOME` to a temp dir to keep your real config and
@@ -26,6 +26,12 @@ Conventional Commits. Subjects describe the change for a user, never a bead id.
 make code compile. No `unwrap`/`expect`/`panic`/`todo`/indexing/`as` casts in non-test code.
 `clippy.toml` allows them in tests. `#[allow(clippy::...)]` needs a one-line comment saying why,
 on one item only. Ask BK before relaxing `arithmetic_side_effects` or `as_conversions`.
+
+`[lints.rust]` sets `unsafe_code = "deny"`. The one FFI item, `disinherit_std_handles` in
+`src/main.rs`, carries `#[allow(unsafe_code)]`; ask BK before adding another.
+
+The Stop hook in `.claude/settings.json` runs fmt, clippy and nextest at the end of every turn
+and blocks while they are red. CI also runs `cargo deny check` and `cargo machete`.
 
 ## Dependencies
 
@@ -85,5 +91,5 @@ TDD: red, green, refactor, per behaviour.
 5. `az`, `gh`, `herdr` and `claude` are never spawned in tests. Their argv and reply parsing are
    pure and tested with plain strings.
 
-Gate before any bead closes: `cargo fmt --check`, `cargo clippy --all-targets`,
+Gate before any bead closes: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 `cargo nextest run`, all green.

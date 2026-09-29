@@ -443,6 +443,8 @@ fn complete_names_outside_ok() -> Vec<String> {
 /// until it exits. Children still get their std handles: `Stdio` duplicates
 /// an inheritable copy for each spawn. Failures are logged, not fatal.
 #[cfg(windows)]
+// The one FFI item in the crate: two kernel32 calls with no safe std equivalent.
+#[allow(unsafe_code)]
 fn disinherit_std_handles() {
     use std::ffi::c_void;
 

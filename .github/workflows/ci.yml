@@ -19,5 +19,15 @@ jobs:
         with:
           tool: nextest
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --no-tests=pass
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - run: cargo deny check
+      - run: cargo machete
