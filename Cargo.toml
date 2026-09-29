@@ -1,6 +1,6 @@
 [package]
 name = "wt"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Turns an intent into a git worktree: a sibling directory, seeded and tracked."
 license = "MIT"
