@@ -260,10 +260,22 @@ fn registration(shell: &dyn EnvCompleter, exe: &str) -> String {
 /// leaves unquoted, then substituted back with `pwsh_quote`, so this
 /// touches only that one interpolation rather than re-deriving the whole
 /// script by hand.
+///
+/// The completer also runs the native exe outside our `wt` function, so it
+/// gets the wrapper's UTF-8 decode too, or an æøå candidate comes back
+/// mangled.
 fn pwsh_registration(exe: &str) -> String {
     const PLACEHOLDER: &str = "WT_EXE_PLACEHOLDER";
     registration(&clap_complete::env::Powershell, PLACEHOLDER)
         .replace(PLACEHOLDER, &pwsh_quote(exe))
+        .replace(
+            "    $results = Invoke-Expression @\"",
+            "    $encoding = [Console]::OutputEncoding;\n    [Console]::OutputEncoding = [Text.Encoding]::UTF8;\n    try {\n        $results = Invoke-Expression @\"",
+        )
+        .replace(
+            "\n\"@;\n",
+            "\n\"@;\n    } finally {\n        [Console]::OutputEncoding = $encoding;\n    }\n",
+        )
 }
 
 /// The full script `wt init pwsh` prints for `$PROFILE`.
@@ -481,9 +493,15 @@ mod tests {
                 $args += " ''";
             }
 
-            $results = Invoke-Expression @"
+            $encoding = [Console]::OutputEncoding;
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8;
+            try {
+                $results = Invoke-Expression @"
         & '/home/bk/.cargo/bin/wt' -- $args
         "@;
+            } finally {
+                [Console]::OutputEncoding = $encoding;
+            }
             if ($null -eq $prev) {
                 Remove-Item Env:\COMPLETE;
             } else {
@@ -631,9 +649,15 @@ mod tests {
                 $args += " ''";
             }
 
-            $results = Invoke-Expression @"
+            $encoding = [Console]::OutputEncoding;
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8;
+            try {
+                $results = Invoke-Expression @"
         & 'C:\Program Files\wt\wt.exe' -- $args
         "@;
+            } finally {
+                [Console]::OutputEncoding = $encoding;
+            }
             if ($null -eq $prev) {
                 Remove-Item Env:\COMPLETE;
             } else {
@@ -654,6 +678,20 @@ mod tests {
             }
         };
         "#);
+    }
+
+    #[test]
+    fn pwsh_completer_decodes_as_utf8_like_the_wrapper() {
+        // Fails loudly if a `clap_complete` upgrade moves the anchors
+        // `pwsh_registration` patches.
+        let script = pwsh_init_script(FAKE_EXE);
+        assert_eq!(
+            script
+                .matches("[Console]::OutputEncoding = [Text.Encoding]::UTF8")
+                .count(),
+            2,
+            "{script}"
+        );
     }
 
     #[test]
